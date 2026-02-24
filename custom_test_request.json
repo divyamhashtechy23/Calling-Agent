@@ -1,0 +1,14 @@
+{
+  "orgId": "org1",
+  "userId": "user1",
+  "sequenceId": "seq1",
+  "leadId": "lead1",
+  "leadName": "Shivi",
+  "leadPhone": "+916261652154",
+  "leadCompany": "Hashtechy",
+  "language": "en",
+  "callPurpose": "Quick introduction to our AI services",
+  "callingScript": "- Introduce company briefly\n- Ask if they are exploring AI initiatives\n- If interested, confirm specialist follow-up\n- If not interested, thank and close",
+  "callerName": "Salesy",
+  "orgName": "Hashtechy"
+}
