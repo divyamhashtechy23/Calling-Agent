@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 class RetellConfigError(Exception):
     """Raised when required Retell env vars are missing."""
-
-
+    
 class RetellService:
     """
     Async-friendly Retell API wrapper.

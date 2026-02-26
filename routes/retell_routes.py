@@ -21,7 +21,7 @@ from app.models import Call
 from app.schemas import (
     InitiateCallRequest,
     WebCallRequest,
-    ImportPhoneNumberRequest,
+    ConnectPhoneNumberRequest,
 )
 from services.retell_service import RetellService, RetellConfigError
 
@@ -55,84 +55,84 @@ def get_retell_service() -> RetellService:
 @router.post("/api/retell/call", summary="Initiate a Retell AI outbound call")
 async def initiate_retell_call(request: InitiateCallRequest):
     """
-    Creates an outbound call via Retell AI.
-    Retell handles the full STT → LLM → TTS conversation using your pre-built agent.
-    The call record is saved to the database and fields are updated via the /webhook/retell endpoint.
+    Creates an outbound call via Retell AI using the new rich context payload.
     """
+
     db = SessionLocal()
     try:
-        # 1. Create a DB record immediately so we can track before webhook fires
+        # 1. Create a DB record immediately
         call = Call(
-            lead_id=request.lead_id or "N/A",
-            lead_name=request.lead_name or "Unknown",
-            lead_phone=request.to_number,
+            lead_id=request.leadId,
+            lead_name=request.leadName,
+            lead_phone=request.leadPhone,
             status="initiated",
         )
         db.add(call)
         db.commit()
         db.refresh(call)
 
-        # 2. Build dynamic variables — injected into the agent's prompt at runtime
-        dynamic_vars: Dict[str, str] = {}
-        if request.lead_name:
-            dynamic_vars["customer_name"] = request.lead_name
+        # 2. Build dynamic variables for the AI context
+        # These are injected into the agent's prompt
+        dynamic_vars = {
+            "leadName": request.leadName,
+            "leadCompany": request.leadCompany or "N/A",
+            "callPurpose": request.callPurpose,
+            "callingScript": request.callingScript,
+            "callerName": request.callerName,
+            "orgName": request.orgName
+        }
 
-        # 3. Build metadata — stored on call object in Retell (retrievable later)
-        metadata = request.metadata or {}
-        metadata["internal_call_id"] = call.id
-        if request.lead_id:
-            metadata["lead_id"] = request.lead_id
+        # 3. Build metadata for tracking
+        metadata = {
+            "internal_call_id": call.id,
+            "org_id": request.orgId,
+            "user_id": request.userId,
+            "sequence_id": request.sequenceId,
+            "lead_id": request.leadId,
+            "language": request.language
+        }
 
-        # 4. Call Retell API
+        #4. Call Retell API
         try:
             service = get_retell_service()
             retell_call = service.initiate_call(
-                to_number=request.to_number,
+                to_number= request.leadPhone,
                 agent_id=request.agent_id,
                 from_number=request.from_number,
                 metadata=metadata,
-                dynamic_variables=dynamic_vars if dynamic_vars else None,
+                dynamic_variables=dynamic_vars,
             )
         except RetellConfigError as e:
             db.delete(call)
             db.commit()
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400,detail=str(e))
         except Exception as e:
             call.status = "failed"
             db.commit()
             logger.error("Retell call initiation failed: %s", e)
             raise HTTPException(status_code=502, detail=f"Retell API error: {str(e)}")
-
+        
         # 5. Update DB record with Retell call ID
         call.retell_call_id = retell_call.get("call_id")
-        call.status = retell_call.get("call_status", "registered")
+        call.status = retell_call.get("call_status","registered")
         db.commit()
-
-        logger.info(
-            "Call created | internal_id=%s | retell_call_id=%s",
-            call.id, call.retell_call_id,
-        )
 
         return {
             "success": True,
-            "message": "Call initiated via Retell AI. Conversation is fully managed by Retell.",
             "internal_call_id": call.id,
             "retell_call_id": call.retell_call_id,
             "status": call.status,
-            "to_number": request.to_number,
-            "lead_name": request.lead_name,
-            "note": "Transcript and summary will be saved automatically when the call ends via /webhook/retell",
+            "message": f"Call to {request.leadName} initiated sucessfully."
         }
 
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        logger.error("Unexpected error in initiate_retell_call: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Failed to initiate call: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to initiate call: {str(e)}")
     finally:
         db.close()
-
 
 # ------------------------------------------------------------------ #
 #   POST /api/retell/web-call — browser-based test                    #
@@ -368,53 +368,51 @@ async def get_retell_call(call_id: str):
 
 
 # ------------------------------------------------------------------ #
-#   Phone Number Management (VoBiz / custom SIP trunk)               #
+# Phone Number Connection (any SIP trunk provider)
+
 # ------------------------------------------------------------------ #
 
-
 @router.post(
-    "/api/retell/phone-number/import",
-    summary="Import a VoBiz phone number into Retell (bind to SIP trunk)",
+    "/api/retell/phone-number/connect",
+    summary="Connect a phone number to Retell via SIP trunking  ",
 )
-async def import_phone_number(request: ImportPhoneNumberRequest):
-    """
-    Connects your VoBiz phone number to Retell AI via SIP trunking.
-
-    **Before calling this endpoint, complete these steps in VoBiz:**
-    1. Create a SIP Trunk in VoBiz → note the **Trunk ID** (your termination URI will be `<trunkId>.sip.vobiz.ai`)
-    2. Add SIP credentials (username + password) under the trunk's **Credentials** section
-    3. Under **Origination URIs**, add: `sip:sip.retellai.com` — this routes inbound calls to Retell
-    4. Assign your phone number to this trunk
-
-    Once the number is imported, use it as `from_number` when calling `POST /api/retell/call`.
-    """
+async def connect_phone_number(request: ConnectPhoneNumberRequest):
+    """Connect a phone number to Retell via SIP trunking."""
     try:
+        if not request.phone_number.startswith("+") or len(request.phone_number) < 10:
+            raise HTTPException(status_code=400, detail="Invalid phone number")
+
+        #2. Validate termination URI
+
+        if "retellai.com" in request.termination_uri:
+            raise HTTPException(status_code=400, detail="Invalid termination URI")
+
+        #3. Connect via Retell
         service = get_retell_service()
         result = service.import_phone_number(
             phone_number=request.phone_number,
             termination_uri=request.termination_uri,
-            sip_trunk_auth_username=request.sip_trunk_auth_username,
-            sip_trunk_auth_password=request.sip_trunk_auth_password,
-            inbound_agent_id=request.inbound_agent_id,
-            outbound_agent_id=request.outbound_agent_id,
+            sip_trunk_auth_username=request.sip_trunk_username,
+            sip_trunk_auth_password=request.sip_trunk_password,
             nickname=request.nickname,
             transport=request.transport,
         )
         return {
             "success": True,
-            "message": f"Phone number {request.phone_number} successfully imported into Retell.",
+            "message": f"Phone number {request.phone_number} connected to Retell successfully.",
             "phone_number": result.get("phone_number"),
-            "phone_number_type": result.get("phone_number_type"),
             "inbound_agent_id": result.get("inbound_agent_id"),
             "outbound_agent_id": result.get("outbound_agent_id"),
-            "next_step": f"Use '{request.phone_number}' as from_number in POST /api/retell/call",
+            "next_step": f"Use '{request.phone_number}' as from_number in POST /api/retell/call"
         }
+
+    except HTTPException:
+        raise
     except RetellConfigError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error("Phone number import failed: %s", e)
-        raise HTTPException(status_code=502, detail=f"Retell API error: {str(e)}")
-
+        logger.error("Phone number connection failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
 
 @router.get(
     "/api/retell/phone-numbers",
@@ -442,7 +440,6 @@ async def list_phone_numbers():
     except Exception as e:
         logger.error("Failed to list phone numbers: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
-
 
 @router.delete(
     "/api/retell/phone-number/{phone_number:path}",

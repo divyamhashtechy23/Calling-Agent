@@ -165,7 +165,7 @@ All endpoints are accessible via the Swagger UI at `/docs`.
 
 | Method | Endpoint                                      | Description                                |
 | ------ | --------------------------------------------- | ------------------------------------------ |
-| POST   | `/api/retell/phone-number/import`              | Import a VoBiz number into Retell          |
+| POST   | `/api/retell/phone-number/connect`           | Connect a SIP trunk number into Retell     |
 | GET    | `/api/retell/phone-numbers`                    | List all registered phone numbers          |
 | DELETE  | `/api/retell/phone-number/{phone_number}`     | Remove a number from Retell                |
 
@@ -212,17 +212,17 @@ curl -X POST http://localhost:8000/api/retell/call \
 
 > **Note:** You need a valid `RETELL_FROM_NUMBER` in `.env` or pass `from_number` in the request body.
 
-### Test 4 — Import a VoBiz Phone Number
+### Test 4 — Connect a SIP Trunk Phone Number (Any Provider)
 
 ```bash
-curl -X POST http://localhost:8000/api/retell/phone-number/import \
+curl -X POST http://localhost:8000/api/retell/phone-number/connect \
   -H "Content-Type: application/json" \
   -d '{
     "phone_number": "+919XXXXXXXX",
-    "termination_uri": "your-trunk-id.sip.vobiz.ai",
-    "sip_trunk_auth_username": "your_username",
-    "sip_trunk_auth_password": "your_password",
-    "nickname": "My VoBiz Line"
+    "termination_uri": "your-trunk-id.sip.provider.com",
+    "sip_trunk_username": "your_username",
+    "sip_trunk_password": "your_password",
+    "nickname": "My Office Line"
   }'
 ```
 
