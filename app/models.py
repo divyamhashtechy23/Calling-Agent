@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, DateTime, Integer
+from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 import uuid
 from datetime import datetime
@@ -19,3 +19,7 @@ class Call(Base):
     recording_url = Column(String, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    interest_level = Column(String, nullable=True)
+    callback_requested = Column(Boolean, default=False)
+    callback_time = Column(String, nullable=True)
+    stop_sequence = Column(Boolean, default=False)

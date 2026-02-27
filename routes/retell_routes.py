@@ -47,11 +47,6 @@ def get_retell_service() -> RetellService:
 #   POST /api/retell/call — initiate outbound call                    #
 # ------------------------------------------------------------------ #
 
-
-# ------------------------------------------------------------------ #
-#   POST /api/retell/call — initiate outbound call                    #
-# ------------------------------------------------------------------ #
-
 @router.post("/api/retell/call", summary="Initiate a Retell AI outbound call")
 async def initiate_retell_call(request: InitiateCallRequest):
     """
@@ -96,7 +91,7 @@ async def initiate_retell_call(request: InitiateCallRequest):
         try:
             service = get_retell_service()
             retell_call = service.initiate_call(
-                to_number= request.leadPhone,
+                to_number=request.leadPhone,
                 agent_id=request.agent_id,
                 from_number=request.from_number,
                 metadata=metadata,
@@ -105,7 +100,7 @@ async def initiate_retell_call(request: InitiateCallRequest):
         except RetellConfigError as e:
             db.delete(call)
             db.commit()
-            raise HTTPException(status_code=400,detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             call.status = "failed"
             db.commit()
@@ -114,7 +109,7 @@ async def initiate_retell_call(request: InitiateCallRequest):
         
         # 5. Update DB record with Retell call ID
         call.retell_call_id = retell_call.get("call_id")
-        call.status = retell_call.get("call_status","registered")
+        call.status = retell_call.get("call_status", "registered")
         db.commit()
 
         return {
@@ -122,7 +117,7 @@ async def initiate_retell_call(request: InitiateCallRequest):
             "internal_call_id": call.id,
             "retell_call_id": call.retell_call_id,
             "status": call.status,
-            "message": f"Call to {request.leadName} initiated sucessfully."
+            "message": f"Call to {request.leadName} initiated successfully."
         }
 
     except HTTPException:
@@ -192,38 +187,21 @@ async def create_retell_web_call(request: WebCallRequest):
 async def retell_webhook(request: Request):
     """
     Retell POSTs events here as the call progresses.
-
-    Events handled:
-      call_started   → update status to 'ongoing'
-      call_ended     → save transcript, duration, update status
-      call_analyzed  → save call_summary, recording_url
-
-    Set this URL in the Retell Dashboard → Settings → Webhooks:
-      https://<your-ngrok-url>/webhook/retell
     """
-    # 1. Read raw body (needed for signature verification)
+    # 1. Read and parse body
     body_bytes = await request.body()
     body_str = body_bytes.decode("utf-8")
 
-    # 2. Verify Retell signature (security — only accept genuine Retell events)
+    # 2. Verify signature
     api_key = os.getenv("RETELL_API_KEY", "")
     signature = request.headers.get("x-retell-signature", "")
-
     if api_key and signature:
         try:
-            is_valid = Retell.verify(body_str, api_key, signature)
-            if not is_valid:
-                logger.warning("Invalid Retell webhook signature — rejected")
-                raise HTTPException(status_code=401, detail="Invalid webhook signature")
-        except HTTPException:
-            raise
+            if not Retell.verify(body_str, api_key, signature):
+                raise HTTPException(status_code=401, detail="Invalid signature")
         except Exception as e:
-            logger.warning("Retell signature verification error: %s", e)
-            # Don't hard-fail during development if verify() itself errors
-    else:
-        logger.debug("Skipping signature verification (API key or signature missing)")
+            logger.warning("Signature verification error: %s", e)
 
-    # 3. Parse payload
     try:
         data = json.loads(body_str)
     except json.JSONDecodeError:
@@ -233,62 +211,52 @@ async def retell_webhook(request: Request):
     call_data = data.get("call", {})
     retell_call_id = call_data.get("call_id")
 
-    logger.info("Retell webhook | event=%s | retell_call_id=%s", event, retell_call_id)
-
     if not retell_call_id:
-        logger.warning("Webhook missing call_id — ignoring")
         return Response(status_code=204)
 
-    # 4. Look up call in DB by retell_call_id
+    # 3. DB processing
     db = SessionLocal()
     try:
         call = db.query(Call).filter(Call.retell_call_id == retell_call_id).first()
-
         if not call:
-            # Could be a call initiated outside this server; log and ignore
-            logger.info("No DB record for retell_call_id=%s — skipping", retell_call_id)
             return Response(status_code=204)
 
-        # 5. Handle each event type
         if event == "call_started":
             call.status = "ongoing"
-            logger.info("Call started: %s", retell_call_id)
-
+            
         elif event == "call_ended":
             call.status = call_data.get("call_status", "ended")
             call.transcript = call_data.get("transcript")
             call.duration_ms = call_data.get("duration_ms")
-            logger.info(
-                "Call ended: %s | duration=%sms | transcript_len=%s",
-                retell_call_id,
-                call.duration_ms,
-                len(call.transcript or ""),
-            )
-
+            
         elif event == "call_analyzed":
-            # call_analysis is a sub-object in call_data
             analysis = call_data.get("call_analysis") or {}
             call.call_summary = analysis.get("call_summary")
             call.recording_url = call_data.get("recording_url")
-            # Also save transcript if not already saved (in case call_ended was missed)
+            
+            # Post-call insights extraction
+            custom_data = analysis.get("custom_data_extraction") or {}
+            call.interest_level = custom_data.get("interest_level")
+            call.callback_requested = custom_data.get("callback_requested", False)
+            call.callback_time = custom_data.get("callback_time")
+            call.stop_sequence = custom_data.get("stop_sequence", False)
+
             if call_data.get("transcript") and not call.transcript:
                 call.transcript = call_data.get("transcript")
-            logger.info(
-                "Call analyzed: %s | summary_len=%s | recording=%s",
-                retell_call_id,
-                len(call.call_summary or ""),
-                bool(call.recording_url),
-            )
+            
+            logger.info("Call insights saved: %s | interest=%s", retell_call_id, call.interest_level)
 
         else:
             logger.debug("Unhandled Retell event: %s", event)
 
         db.commit()
 
+    except Exception as e:
+        logger.error("Webhook processing error: %s", e)
+        db.rollback()
     finally:
         db.close()
 
-    # Retell expects HTTP 204 (no content) to acknowledge receipt
     return Response(status_code=204)
 
 
@@ -321,6 +289,8 @@ async def list_retell_calls(limit: int = 50):
                     "has_transcript": bool(c.transcript),
                     "has_summary": bool(c.call_summary),
                     "recording_url": c.recording_url,
+                    "interest_level": c.interest_level,
+                    "callback_requested": c.callback_requested,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
                 }
                 for c in calls
@@ -342,7 +312,6 @@ async def get_retell_call(call_id: str):
     """
     db = SessionLocal()
     try:
-        # Support lookup by both internal DB id and retell_call_id
         call = (
             db.query(Call).filter(Call.id == call_id).first()
             or db.query(Call).filter(Call.retell_call_id == call_id).first()
@@ -361,6 +330,10 @@ async def get_retell_call(call_id: str):
             "transcript": call.transcript,
             "call_summary": call.call_summary,
             "recording_url": call.recording_url,
+            "interest_level": call.interest_level,
+            "callback_requested": call.callback_requested,
+            "callback_time": call.callback_time,
+            "stop_sequence": call.stop_sequence,
             "created_at": call.created_at.isoformat() if call.created_at else None,
         }
     finally:
@@ -369,12 +342,11 @@ async def get_retell_call(call_id: str):
 
 # ------------------------------------------------------------------ #
 # Phone Number Connection (any SIP trunk provider)
-
 # ------------------------------------------------------------------ #
 
 @router.post(
     "/api/retell/phone-number/connect",
-    summary="Connect a phone number to Retell via SIP trunking  ",
+    summary="Connect a phone number to Retell via SIP trunking",
 )
 async def connect_phone_number(request: ConnectPhoneNumberRequest):
     """Connect a phone number to Retell via SIP trunking."""
@@ -382,12 +354,9 @@ async def connect_phone_number(request: ConnectPhoneNumberRequest):
         if not request.phone_number.startswith("+") or len(request.phone_number) < 10:
             raise HTTPException(status_code=400, detail="Invalid phone number")
 
-        #2. Validate termination URI
-
         if "retellai.com" in request.termination_uri:
             raise HTTPException(status_code=400, detail="Invalid termination URI")
 
-        #3. Connect via Retell
         service = get_retell_service()
         result = service.import_phone_number(
             phone_number=request.phone_number,
@@ -413,6 +382,7 @@ async def connect_phone_number(request: ConnectPhoneNumberRequest):
     except Exception as e:
         logger.error("Phone number connection failed: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
+
 
 @router.get(
     "/api/retell/phone-numbers",
@@ -441,6 +411,7 @@ async def list_phone_numbers():
         logger.error("Failed to list phone numbers: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
 
+
 @router.delete(
     "/api/retell/phone-number/{phone_number:path}",
     summary="Remove a phone number from Retell (does not delete from VoBiz)",
@@ -449,9 +420,6 @@ async def list_phone_numbers():
 async def delete_phone_number(phone_number: str):
     """
     Disconnects a phone number from your Retell account.
-    The number will remain active in VoBiz — this only removes it from Retell.
-
-    Pass the number URL-encoded, e.g. `/api/retell/phone-number/%2B91XXXXXXXXXX`
     """
     try:
         service = get_retell_service()
