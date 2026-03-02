@@ -1,0 +1,253 @@
+# Provider Connection — Frontend Payload Reference
+
+> Base URL: `http://your-server:8000`
+
+---
+
+## UI Flow
+
+```
+┌─ Step 1: Select Provider ──────────────────────────┐
+│  Provider:  [ VoBiz ▼ ]                             │  ← GET /providers/supported
+│             ┌──────────┐                            │
+│             │ VoBiz    │                            │
+│             │ Twilio   │                            │
+│             │ Plivo    │                            │
+│             │ Exotel   │                            │
+│             └──────────┘                            │
+└─────────────────────────────────────────────────────┘
+         ↓ on select
+┌─ Step 2: Dynamic Form ─────────────────────────────┐
+│  API Key:     [____________]                        │  ← GET /providers/fields/{provider}
+│  API Secret:  [____________]                        │
+│  Phone:       [____________]                        │
+│                                                     │
+│  [ Connect ]            [ Disconnect ]              │  ← POST /connect  or  DELETE /disconnect
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## API Endpoints
+
+### 1. Get Provider Dropdown Options
+
+```
+GET /api/bolna/providers/supported
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "supported_providers": ["vobiz", "twilio", "plivo", "exotel"],
+  "count": 4
+}
+```
+
+---
+
+### 2. Get Form Fields for Selected Provider
+
+```
+GET /api/bolna/providers/fields/{provider}
+```
+
+Each provider returns different fields. The frontend should **dynamically render** one text input per field.
+
+#### VoBiz → `/providers/fields/vobiz`
+```json
+{
+  "required_fields": ["api_key", "api_secret", "phone_number"]
+}
+```
+
+#### Twilio → `/providers/fields/twilio`
+```json
+{
+  "required_fields": ["account_sid", "auth_token", "phone_number"]
+}
+```
+
+#### Plivo → `/providers/fields/plivo`
+```json
+{
+  "required_fields": ["auth_id", "auth_token", "phone_number"]
+}
+```
+
+#### Exotel → `/providers/fields/exotel`
+```json
+{
+  "required_fields": ["api_key", "api_token", "account_sid", "domain", "phone_number", "outbound_app_id", "inbound_app_id"]
+}
+```
+
+#### Form Field Labels (suggested mapping)
+
+| Field Name | Label for UI | Input Type | Placeholder |
+|------------|-------------|------------|-------------|
+| `api_key` | API Key | text | Enter your API key |
+| `api_secret` | API Secret | password | Enter your API secret |
+| `api_token` | API Token | password | Enter your API token |
+| `account_sid` | Account SID | text | e.g. ACxxxxxxxx |
+| `auth_id` | Auth ID | text | Enter your Auth ID |
+| `auth_token` | Auth Token | password | Enter your Auth token |
+| [phone_number](file:///d:/Calling-Agent/routes/bolna_routes.py#349-369) | Phone Number | tel | +91XXXXXXXXXX |
+| `domain` | Domain | text | e.g. api.exotel.com |
+| `outbound_app_id` | Outbound App ID | text | Enter App ID |
+| `inbound_app_id` | Inbound App ID | text | Enter App ID |
+
+---
+
+### 3. Connect Provider (Submit Form)
+
+```
+POST /api/bolna/providers/connect
+Content-Type: application/json
+```
+
+**Request payloads per provider:**
+
+#### VoBiz
+```json
+{
+  "provider": "vobiz",
+  "credentials": {
+    "api_key": "MA_OKKPN9FH",
+    "api_secret": "G2yyImAEVYLv...",
+    "phone_number": "+917971543244"
+  }
+}
+```
+
+#### Twilio
+```json
+{
+  "provider": "twilio",
+  "credentials": {
+    "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "auth_token": "your_auth_token_here",
+    "phone_number": "+14155551234"
+  }
+}
+```
+
+#### Plivo
+```json
+{
+  "provider": "plivo",
+  "credentials": {
+    "auth_id": "your_plivo_auth_id",
+    "auth_token": "your_plivo_auth_token",
+    "phone_number": "+917971543244"
+  }
+}
+```
+
+#### Exotel
+```json
+{
+  "provider": "exotel",
+  "credentials": {
+    "api_key": "your_api_key",
+    "api_token": "your_api_token",
+    "account_sid": "your_sid",
+    "domain": "api.exotel.com",
+    "phone_number": "+917971543244",
+    "outbound_app_id": "your_outbound_id",
+    "inbound_app_id": "your_inbound_id"
+  }
+}
+```
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "message": "Provider 'vobiz' connected successfully!",
+  "provider": "vobiz",
+  "credentials_saved": 3,
+  "details": [
+    {"field": "api_key", "bolna_key": "VOBIZ_API_KEY", "status": "saved"},
+    {"field": "api_secret", "bolna_key": "VOBIZ_API_SECRET", "status": "saved"},
+    {"field": "phone_number", "bolna_key": "VOBIZ_PHONE_NUMBER", "status": "saved"}
+  ]
+}
+```
+
+**Already Connected (200):**
+```json
+{
+  "success": true,
+  "credentials_saved": 3,
+  "details": [
+    {"field": "api_key", "status": "already_exists"},
+    {"field": "api_secret", "status": "already_exists"},
+    {"field": "phone_number", "status": "already_exists"}
+  ]
+}
+```
+
+**Missing Fields Error (400):**
+```json
+{
+  "detail": "Missing required fields for vobiz: ['api_secret']. Required: ['api_key', 'api_secret', 'phone_number']"
+}
+```
+
+**Unsupported Provider Error (400):**
+```json
+{
+  "detail": "Unsupported provider 'airtel'. Supported: ['vobiz', 'twilio', 'plivo', 'exotel']"
+}
+```
+
+---
+
+### 4. Disconnect Provider
+
+```
+DELETE /api/bolna/providers/disconnect/{provider}
+```
+
+Example: `DELETE /api/bolna/providers/disconnect/vobiz`
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "message": "Provider 'vobiz' disconnected — 3 credentials removed.",
+  "provider": "vobiz",
+  "credentials_deleted": 3,
+  "details": [
+    {"bolna_key": "VOBIZ_API_KEY", "provider_id": "f3d1...", "status": "deleted"},
+    {"bolna_key": "VOBIZ_API_SECRET", "provider_id": "a2b3...", "status": "deleted"},
+    {"bolna_key": "VOBIZ_PHONE_NUMBER", "provider_id": "c4d5...", "status": "deleted"}
+  ]
+}
+```
+
+---
+
+### 5. List Connected Providers
+
+```
+GET /api/bolna/providers
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "providers": {
+    "providers": [
+      {"provider_id": "f3d1...", "provider_name": "VOBIZ_API_KEY", "provider_value": "xxxxxxN9FH"},
+      {"provider_id": "a2b3...", "provider_name": "VOBIZ_API_SECRET", "provider_value": "xxxxxxVnZk"},
+      {"provider_id": "c4d5...", "provider_name": "VOBIZ_PHONE_NUMBER", "provider_value": "+917971543244"}
+    ]
+  }
+}
+```
+
+> Use this to show a "Connected" badge next to already-linked providers.

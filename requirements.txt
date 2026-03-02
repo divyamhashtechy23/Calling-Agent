@@ -3,7 +3,7 @@ pydantic==2.5.0
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 
-# HTTP clients (async + sync)
+# HTTP clients (used for Bolna REST API calls)
 httpx==0.26.0
 requests==2.31.0
 aiohttp==3.9.3
@@ -11,10 +11,6 @@ python-multipart>=0.0.9
 
 # Environment variables
 python-dotenv==1.0.0
-
-# Voice/calling integration
-twilio==8.11.0
-retell-sdk>=4.0.0
 
 # Database
 sqlalchemy==2.0.25

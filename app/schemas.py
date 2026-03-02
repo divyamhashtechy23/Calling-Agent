@@ -1,8 +1,13 @@
+"""
+Pydantic Schemas — request/response validation for the API.
+"""
+
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+
 
 class InitiateCallRequest(BaseModel):
-    """Payload to start a Retell outbound call with full organization and lead context."""
+    """Payload to start an outbound call with organization and lead context."""
     orgId: str = Field(..., description="Organization ID")
     userId: str = Field(..., description="User ID who initiated the call")
     sequenceId: str = Field(..., description="Sequence or Campaign ID")
@@ -15,10 +20,10 @@ class InitiateCallRequest(BaseModel):
     callingScript: str = Field(..., description="Guidelines for the AI to follow")
     callerName: str = Field(..., description="The name the AI will use")
     orgName: str = Field(..., description="The organization the AI represents")
-    
-    # Optional Retell overrides
+
     agent_id: Optional[str] = None
     from_number: Optional[str] = None
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -31,50 +36,102 @@ class InitiateCallRequest(BaseModel):
                 "leadCompany": "Hashtechy",
                 "language": "en",
                 "callPurpose": "Quick introduction to our AI services",
-                "callingScript": "- Introduce company briefly\n- Ask if they are exploring AI initiatives\n- If interested, confirm specialist follow-up\n- If not interested, thank and close",
+                "callingScript": (
+                    "- Introduce company briefly\n"
+                    "- Ask if they are exploring AI initiatives\n"
+                    "- If interested, confirm specialist follow-up\n"
+                    "- If not interested, thank and close"
+                ),
                 "callerName": "Salesy",
-                "orgName": "Hashtechy"
+                "orgName": "Hashtechy",
             }
         }
 
-    
-class WebCallRequest(BaseModel):
-    """Payload to create a browser-based web call session."""
-    agent_id: Optional[str] = None
-    lead_name: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
 
-class ConnectPhoneNumberRequest(BaseModel):
-    """Payload to connect a phone number to Retell."""
+class ConnectSipTrunkRequest(BaseModel):
+    """Payload to connect an external SIP trunk phone number to Bolna (BYOT)."""
+    name: str = Field(
+        ...,
+        description="Friendly label for this trunk",
+        examples=["My VoBiz Trunk"],
+    )
+    provider: str = Field(
+        ...,
+        description="Telephony provider name (e.g. 'vobiz', 'twilio', 'plivo')",
+        examples=["vobiz"],
+    )
     phone_number: str = Field(
         ...,
-        description="Your phone number in E.164 format, e.g. +91XXXXXXXXXX",
-        example="+919XXXXXXXX"
+        description="Phone number in E.164 format",
+        examples=["+919XXXXXXXX"],
     )
-    
-    termination_uri: str = Field(
+    gateway_address: str = Field(
         ...,
-        description="SIP trunk termination URI, e.g. your-trunk-id.sip",
-        example="your-trunk-id.sip"
+        description="SIP trunk gateway address",
+        examples=["8bb6434a.sip.vobiz.ai"],
     )
-    
-    sip_trunk_username: Optional[str] = Field(
+    auth_type: str = Field(
+        "userpass",
+        description="Authentication method: 'userpass' or 'ip-based'",
+    )
+    auth_username: Optional[str] = Field(
         None,
-        description="SIP credential username from your respective SIP trunk settings" 
+        description="SIP auth username (required for 'userpass' auth)",
     )
-    
-    sip_trunk_password: Optional[str] = Field(
+    auth_password: Optional[str] = Field(
         None,
-        description="SIP credential password from your respective SIP trunk settings"
+        description="SIP auth password (required for 'userpass' auth)",
     )
-    
-    nickname: Optional[str] = Field(
+
+
+class BuyPhoneNumberRequest(BaseModel):
+    """Payload to buy a phone number from Bolna."""
+    country: str = Field(
+        "IN",
+        description="Two-letter country code (e.g. IN, US, GB)",
+    )
+    phone_number: Optional[str] = Field(
         None,
-        description="Friendly label for this number in the Retell dashboard",
-        example="My Line"
+        description="Optional: specific number to purchase",
     )
-    
-    transport: str = Field(
-        "TCP",
-        description="SIP transport protocol: TCP (recommended), UDP, or TLS"
+
+
+class ConnectProviderRequest(BaseModel):
+    """
+    Payload to connect a business's telephony provider to Bolna.
+    Provider credentials are passed as flexible key-value pairs since
+    different providers require different fields.
+    """
+    provider: str = Field(
+        ...,
+        description=(
+            "Telephony provider name. "
+            "Supported: 'vobiz', 'twilio', 'plivo', 'exotel'"
+        ),
+        examples=["vobiz", "twilio", "plivo", "exotel"],
     )
+
+    credentials: Dict[str, str] = Field(
+        ...,
+        description=(
+            "Provider credentials as key-value pairs. "
+            "Use GET /api/bolna/providers/fields/{provider} to see required fields."
+        ),
+        examples=[{
+            "api_key": "your_api_key",
+            "api_secret": "your_api_secret",
+            "phone_number": "+917971543244",
+        }],
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "provider": "vobiz",
+                "credentials": {
+                    "api_key": "your_vobiz_api_key",
+                    "api_secret": "your_vobiz_api_secret",
+                    "phone_number": "+917971543244",
+                },
+            }
+        }

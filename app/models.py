@@ -1,3 +1,15 @@
+"""
+Database Models — SQLAlchemy ORM definitions.
+
+WHAT CHANGED:
+    - 'retell_call_id' → 'bolna_execution_id'
+      Bolna calls a "call" an "execution" — each call gets an execution_id.
+      This is the unique identifier that links our DB record to Bolna's data.
+
+    Everything else stays the same — the Call model is generic enough
+    to work with any calling provider.
+"""
+
 from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 import uuid
@@ -12,10 +24,10 @@ class Call(Base):
     lead_id = Column(String)
     lead_name = Column(String)
     lead_phone = Column(String)
-    retell_call_id = Column(String, nullable=True, index=True)
+    bolna_execution_id = Column(String, nullable=True, index=True)   # was: retell_call_id
     status = Column(String, default="queued")
     transcript = Column(Text, nullable=True)
-    call_summary = Column(Text, nullable=True)          # from Retell call_analyzed event
+    call_summary = Column(Text, nullable=True)          # from Bolna completed webhook
     recording_url = Column(String, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
