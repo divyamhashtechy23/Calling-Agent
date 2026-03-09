@@ -174,10 +174,28 @@ async def bolna_webhook(request: Request):
 
             extracted = data.get("extracted_data") or {}
             if extracted:
-                call.interest_level = extracted.get("interest_level")
-                call.callback_requested = extracted.get("callback_requested", False)
-                call.callback_time = extracted.get("callback_time")
-                call.stop_sequence = extracted.get("stop_sequence", False)
+                # Bolna sends values like "interest_level: medium" or "callback_requested: true"
+                # We need to clean them — strip the key prefix and convert to proper types
+                def clean_value(val):
+                    """Extract the actual value from Bolna's 'key: value' string format."""
+                    if not isinstance(val, str):
+                        return val
+                    # If it contains ":", take only the part after the last ":"
+                    if ":" in val:
+                        val = val.split(":")[-1].strip()
+                    return val
+
+                def to_bool(val):
+                    """Convert string/bool to Python boolean for DB."""
+                    if isinstance(val, bool):
+                        return val
+                    val = clean_value(val)
+                    return str(val).lower() in ("true", "yes", "1")
+
+                call.interest_level = clean_value(extracted.get("interest_level"))
+                call.callback_requested = to_bool(extracted.get("callback_requested", False))
+                call.callback_time = clean_value(extracted.get("callback_time"))
+                call.stop_sequence = to_bool(extracted.get("stop_sequence", False))
 
             logger.info(
                 "Call completed | execution_id=%s | interest=%s",

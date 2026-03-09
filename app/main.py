@@ -11,6 +11,7 @@ WHAT CHANGED:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import bolna_routes        # ← was: retell_routes
+from routes import call_tracking_routes
 from app.database import engine
 from app.models import Base
 from dotenv import load_dotenv
@@ -62,6 +63,9 @@ app.add_middleware(
 
 # ✅ Bolna AI — primary integration
 app.include_router(bolna_routes.router)
+
+# ✅ Call Tracking — AiCallTracking GET API (SQL Server)
+app.include_router(call_tracking_routes.router)
 
 
 # ------------------------------------------------------------------ #

@@ -4,6 +4,7 @@ Pydantic Schemas — request/response validation for the API.
 
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 
 
 class InitiateCallRequest(BaseModel):
@@ -135,3 +136,49 @@ class ConnectProviderRequest(BaseModel):
                 },
             }
         }
+
+
+# ── AiCallTracking Response ─────────────────────────────────────────── #
+
+class AiCallTrackingResponse(BaseModel):
+    """Single AiCallTracking record returned by the GET API."""
+    call_id: Optional[str] = None
+    start_status: Optional[str] = None
+    org_id: Optional[str] = None
+    sequence_id: Optional[str] = None
+    lead_id: Optional[str] = None
+    start_timestamp: Optional[datetime] = None
+    final_status: Optional[str] = None
+    event_type: Optional[str] = None
+    initiated_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
+    total_cost: Optional[float] = None
+    interest_level: Optional[str] = None
+    callback_requested: Optional[bool] = None
+    callback_time: Optional[str] = None
+    stop_sequence: Optional[str] = None
+    notes: Optional[str] = None
+    transcript: Optional[str] = None
+    summary: Optional[str] = None
+    recording_url: Optional[str] = None
+    provider_name: Optional[str] = None
+    telephony_provider: Optional[str] = None
+    agent_id: Optional[str] = None
+    provider_call_id: Optional[str] = None
+    hangup_reason: Optional[str] = None
+    raw_webhook_json: Optional[str] = None
+    webhook_received_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AiCallTrackingListResponse(BaseModel):
+    """Paginated list of AiCallTracking records."""
+    total_count: int = Field(..., description="Total number of records matching the query")
+    limit: int = Field(..., description="Page size")
+    offset: int = Field(..., description="Current offset")
+    records: List[AiCallTrackingResponse] = Field(..., description="List of call-tracking records")
