@@ -23,7 +23,7 @@ class AiCallTracking(MssqlBase):
     event_type = Column(String, nullable=True)
     initiated_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-    duration_seconds = Column(Integer, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
     total_cost = Column(Float, nullable=True)
     interest_level = Column(String, nullable=True)
     callback_requested = Column(Boolean, nullable=True)

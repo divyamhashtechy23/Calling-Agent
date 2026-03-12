@@ -35,3 +35,21 @@ class Call(Base):
     callback_requested = Column(Boolean, default=False)
     callback_time = Column(String, nullable=True)
     stop_sequence = Column(Boolean, default=False)
+
+class CampaignTemplate(Base):
+    __tablename__ = "campaign_templates"
+
+    temp_id = Column(Integer, primary_key=True, autoincrement=True, index=True )
+    user_id = Column(String, default=lambda: str(uuid.uuid4()), index=True, nullable=False)
+    template_name = Column(String(255), nullable=False)
+    industry = Column(String(255), nullable=False)
+    language = Column(String(100), default="en")
+
+    org_name = Column(String(255), nullable=False)
+    caller_name = Column(String(100), nullable=False)
+    call_purpose = Column(Text, nullable=False)
+    call_script = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow,onupdate=datetime.utcnow,nullable=False)
+

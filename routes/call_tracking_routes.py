@@ -26,7 +26,6 @@ _service = CallTrackingService()
 
 @router.get(
     "",
-    response_model=AiCallTrackingListResponse,
     summary="List AiCallTracking records",
     description=(
         "Returns a paginated list of call-tracking records from SQL Server. "
@@ -47,13 +46,29 @@ def list_call_tracking(
             org_id=org_id,
             final_status=final_status,
         )
-        return result
+
+        # Convert ORM objects → Pydantic models
+        records = [
+            AiCallTrackingResponse.model_validate(r)
+            for r in result["records"]
+        ]
+
+        # Build response schema and explicitly dump to JSON-compatible dict to bypass FastAPI encoder crash
+        response = AiCallTrackingListResponse(
+            total_count=result["total_count"],
+            limit=result["limit"],
+            offset=result["offset"],
+            records=records,
+        )
+        return response.model_dump(mode="json")
 
     except RuntimeError as exc:
         # Connection string not configured
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         logger.error("list_call_tracking failed: %s", exc, exc_info=True)
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail="Failed to fetch call-tracking records",
@@ -77,7 +92,7 @@ def get_call_tracking(call_id: str):
                 status_code=404,
                 detail=f"No AiCallTracking record found for call_id: {call_id}",
             )
-        return record
+        return AiCallTrackingResponse.model_validate(record)
 
     except HTTPException:
         raise

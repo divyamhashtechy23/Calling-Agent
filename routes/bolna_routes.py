@@ -8,17 +8,27 @@ import json
 import logging
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Form, Depends
+from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import Call
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 from app.schemas import (
     InitiateCallRequest,
     ConnectSipTrunkRequest,
     BuyPhoneNumberRequest,
     ConnectProviderRequest,
+    ScheduleBatchRequest,
 )
 from services.bolna_service import BolnaService, BolnaConfigError
+from services.template_service import get_template
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +260,42 @@ async def list_bolna_calls(limit: int = 50):
                 }
                 for c in calls
             ],
+        }
+    finally:
+        db.close()
+
+
+@router.get("/api/bolna/metrics", summary="Get overall calling performance metrics")
+async def get_bolna_metrics():
+    """Returns aggregated performance metrics for dashboard (total calls, duration, interest levels)."""
+    db = SessionLocal()
+    try:
+        calls = db.query(Call).filter(Call.bolna_execution_id.isnot(None)).all()
+        
+        total_calls = len(calls)
+        connected_calls = sum(1 for c in calls if c.status == "completed" or c.status == "ended")
+        
+        # Bolna returns duration in MS
+        total_duration_ms = sum(c.duration_ms for c in calls if c.duration_ms)
+        total_duration_minutes = round(total_duration_ms / 60000, 2)
+        
+        # Interest breakdown
+        interest_stats = {
+            "high": sum(1 for c in calls if str(c.interest_level).lower() == "high"),
+            "medium": sum(1 for c in calls if str(c.interest_level).lower() == "medium"),
+            "low": sum(1 for c in calls if str(c.interest_level).lower() == "low"),
+            "unknown": sum(1 for c in calls if not c.interest_level or str(c.interest_level).lower() not in ["high", "medium", "low"])
+        }
+        
+        return {
+            "success": True,
+            "metrics": {
+                "total_calls": total_calls,
+                "connected_calls": connected_calls,
+                "connection_rate_pct": round((connected_calls / total_calls * 100), 1) if total_calls > 0 else 0,
+                "total_duration_minutes": total_duration_minutes,
+                "interest_breakdown": interest_stats,
+            }
         }
     finally:
         db.close()
@@ -571,4 +617,116 @@ async def disconnect_provider(provider: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Provider disconnect failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+# ── Batch ──────────────────────────────────────────────────────────── #
+
+@router.post("/api/bolna/batches", summary="Create a batch call campaign from a CSV File")
+async def create_batch(
+    agent_id: Optional[str] = Form(None),
+    template_id: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        csv_bytes = await file.read()
+        service = get_bolna_service()
+
+        template_data = None
+        if template_id:
+            db_template = get_template(db, temp_id=template_id)
+            if not db_template:
+                raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
+                
+            template_data = {
+                "template_name": db_template.template_name,
+                "industry": db_template.industry,
+                "language": db_template.language,
+                "org_name": db_template.org_name,
+                "caller_name": db_template.caller_name,
+                "call_purpose": db_template.call_purpose,
+                "call_script": db_template.call_script
+            }
+            logger.info("Loaded template '%s' for batch", template_data["template_name"])
+
+        result = service.create_batch(
+            csv_bytes=csv_bytes,
+            filename=file.filename,
+            agent_id=agent_id,
+            template_data=template_data
+        )
+        return {
+            "success": True,
+            "batch_id": result.get("batch_id") or result.get("id"),
+            "message": f"Batch created from '{file.filename}'. Use batch_id to schedule or monitor.",
+            "bolna_response": result,
+        }
+
+    except BolnaConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Batch creation failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+@router.post("/api/bolna/batches/{batch_id}/schedule", summary="Schedule a batch for a future date/time")
+async def schedule_batch(batch_id: str, request: ScheduleBatchRequest):
+    try:
+        service = get_bolna_service()
+        result = service.schedule_batch(
+            batch_id=batch_id,
+            scheduled_at=request.scheduled_at,
+        )
+        return {
+            "success": True,
+            "batch_id": batch_id,
+            "scheduled_at": request.scheduled_at,
+            "bolna_response": result,
+        }
+    except Exception as e:
+        logger.error("Batch scheduling failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/api/bolna/batches", summary="List all batch call campaigns")
+async def list_batches():
+    try:
+        service = get_bolna_service()
+        result = service.list_batches()
+        return {"success": True, "batches": result}
+    except Exception as e:
+        logger.error("Failed to list batches: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.get("/api/bolna/batches/{batch_id}", summary="Get status and progress of a batch")
+async def get_batch(batch_id: str):
+    try:
+        service = get_bolna_service()
+        result = service.get_batch(batch_id)
+        return {"success": True, "batch": result}
+    except Exception as e:
+        logger.error("Failed to get batch: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.post("/api/bolna/batches/{batch_id}/stop", summary="Stop an active batch campaign")
+async def stop_batch(batch_id: str):
+    try:
+        service = get_bolna_service()
+        result = service.stop_batch(batch_id)
+        return {
+            "success": True,
+            "batch_id": batch_id,
+            "message": "Batch stop requested successfully.",
+            "bolna_response": result,
+        }
+    except Exception as e:
+        logger.error("Failed to stop batch: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.get("/api/bolna/batches/{batch_id}/executions", summary="Get all executions for a batch")
+async def get_batch_executions(batch_id: str):
+    try:
+        service = get_bolna_service()
+        result = service.get_batch_executions(batch_id)
+        return {"success": True,"batch_id":batch_id,"executions": result}
+    except Exception as e:
+        logger.error("Failed to get batch executions: %s", e)
         raise HTTPException(status_code=502, detail=str(e))

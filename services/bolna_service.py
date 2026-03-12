@@ -17,8 +17,15 @@ Endpoints:
     - connect_provider()     → POST /providers  (multiple calls)
     - list_providers()       → GET  /providers
     - delete_provider()      → DEL  /providers/{id}
+    - create_batch()         → POST /batches
+    - schedule_batch()       → POST /batches/{id}/schedule
+    - get_batch()            → GET  /batches/{id}
+    - list_batches()         → GET  /batches
+    - stop_batch()           → POST /batches/{id}/stop
+    - get_batch_executions() → GET  /batches/{id}/executions
 """
-
+import io 
+import csv
 import os
 import logging
 from typing import Optional, Dict, Any, List
@@ -406,3 +413,127 @@ class BolnaService:
             "credentials_deleted": len(deleted),
             "details": deleted,
         }
+    # ── Batch Calling ────────────────────────────────────────────────── #
+    def create_batch(
+        self,
+        csv_bytes: bytes,
+        filename: str,
+        agent_id: Optional[str] = None,
+        template_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+
+        resolved_agent_id = agent_id or self.default_agent_id
+        if not resolved_agent_id:
+            raise BolnaConfigError("No agent ID provided and no default agent found")
+
+        final_csv_bytes = csv_bytes
+
+        if template_data:
+            logger.info("Enriching CSV with template variables...")
+            try:
+                # 1. Read the original CSV from bytes into memory
+                string_stream = io.StringIO(csv_bytes.decode('utf-8'))
+                reader = csv.DictReader(string_stream)
+                fieldnames = reader.fieldnames or []
+                
+                # 2. Add the template keys to the CSV header
+                for key in template_data.keys():
+                    if key not in fieldnames:
+                        fieldnames.append(key)
+                
+                # 3. Create a new buffer to write the enriched CSV
+                output_stream = io.StringIO()
+                writer = csv.DictWriter(output_stream, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                # 4. Write every row, injecting the template data into it
+                for row in reader:
+                    for key, value in template_data.items():
+                        row[key] = value
+                    writer.writerow(row)
+                
+                # 5. Convert back to raw bytes for Bolna
+                final_csv_bytes = output_stream.getvalue().encode('utf-8')
+                logger.info("Successfully enriched CSV with template data.")
+            except Exception as e:
+                logger.error("Failed to parse and enrich CSV: %s", e)
+                raise BolnaConfigError(f"Failed to process CSV with template: {e}")
+        # -------------------------------------------------------------
+
+        logger.info(
+            "Creating batch | agent=%s | file=%s | contacts_approx=%s",
+            resolved_agent_id, filename, final_csv_bytes.count(b"\n"),
+        )
+
+        response = httpx.post(
+            f"{BOLNA_BASE_URL}/batches",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            data={"agent_id": resolved_agent_id},
+            files={"file": (filename, final_csv_bytes, "text/csv")}, 
+            timeout=30.0,
+        )
+        return self._check_response(response)
+
+
+    def schedule_batch(
+        self,
+        batch_id: str,
+        scheduled_at: str,
+    ) -> Dict[str, Any]:
+        logger.info("Scheduling batch | id =%s, | at=%s", batch_id, scheduled_at)
+        
+        # Determine if it's already an ISO string or a human-friendly format
+        import dateutil.parser
+        import pytz
+        from datetime import datetime
+        
+        try:
+            # Parse whatever format user supplied (dayfirst=True handles DD-MM-YY properly)
+            dt = dateutil.parser.parse(scheduled_at, dayfirst=True)
+            
+            # If no timezone is provided, assume IST (Asia/Kolkata) since that's your local time
+            ist_tz = pytz.timezone("Asia/Kolkata")
+            if dt.tzinfo is None:
+                dt = ist_tz.localize(dt)
+            
+            # Check if the scheduled time is in the past
+            now_dt = datetime.now(ist_tz)
+            if dt < now_dt:
+                raise ValueError(f"Cannot schedule a batch in the past. Current time is {now_dt.strftime('%d-%m-%y %I:%M %p %Z')}")
+                
+            # Convert to UTC which Bolna expects, and format to ISO 8601 string
+            utc_dt = dt.astimezone(pytz.UTC)
+            # Bolna's backend crashes on .000Z. It needs strict Python fromisoformat style.
+            final_iso_time = utc_dt.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            logger.info("Converted time to ISO: %s", final_iso_time)
+            
+        except Exception as e:
+            logger.error("Could not parse datetime string: %s", e)
+            raise BolnaConfigError(f"Invalid datetime format: {scheduled_at}. Error: {e}")
+
+        # We must use httpx.post directly here as well because self.client has 
+        # Content-Type: application/json forced, but Bolna expects form data here.
+        response = httpx.post(
+            f"{BOLNA_BASE_URL}/batches/{batch_id}/schedule",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            data={"scheduled_at": final_iso_time},
+            timeout=30.0,
+        )
+        return self._check_response(response)
+
+    def get_batch(self, batch_id: str) -> Dict[str, Any]:
+        response = self.client.get(f"/batches/{batch_id}")
+        return self._check_response(response)
+
+    def list_batches(self) -> List[Dict[str, Any]]:
+        response = self.client.get("/batches")
+        return self._check_response(response)
+
+    def stop_batch(self, batch_id: str) -> Dict[str, Any]:
+        logger.info("Stopping batch | id =%s", batch_id)
+        response = self.client.post(f"/batches/{batch_id}/stop")
+        return self._check_response(response)
+
+    def get_batch_executions(self, batch_id: str) -> List[Dict[str, Any]]:
+        response = self.client.get(f"/batches/{batch_id}/executions")
+        return self._check_response(response)

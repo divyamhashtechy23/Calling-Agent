@@ -3,7 +3,7 @@ Pydantic Schemas — request/response validation for the API.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
 
@@ -152,12 +152,12 @@ class AiCallTrackingResponse(BaseModel):
     event_type: Optional[str] = None
     initiated_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    duration_seconds: Optional[int] = None
+    duration_seconds: Optional[float] = None
     total_cost: Optional[float] = None
     interest_level: Optional[str] = None
     callback_requested: Optional[bool] = None
     callback_time: Optional[str] = None
-    stop_sequence: Optional[str] = None
+    stop_sequence: Optional[Union[str, bool]] = None
     notes: Optional[str] = None
     transcript: Optional[str] = None
     summary: Optional[str] = None
@@ -174,7 +174,9 @@ class AiCallTrackingResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 class AiCallTrackingListResponse(BaseModel):
     """Paginated list of AiCallTracking records."""
@@ -182,3 +184,38 @@ class AiCallTrackingListResponse(BaseModel):
     limit: int = Field(..., description="Page size")
     offset: int = Field(..., description="Current offset")
     records: List[AiCallTrackingResponse] = Field(..., description="List of call-tracking records")
+
+class CreateBatchRequest(BaseModel):
+    agent_id: Optional[str] = None
+
+class ScheduleBatchRequest(BaseModel):
+    scheduled_at: str = Field(
+        ...,
+        description="ISO 8601 datetime e.g. '2024-06-04T22:40:00.000Z'",
+        examples=["2024-06-04T22:40:00.000Z"]
+    )
+
+# ── Campaign Templates ────────────────────────────────────────── #
+class TemplateCreate(BaseModel):
+    template_name: str
+    industry: str
+    language: Optional[str] = "en"
+    org_name: str
+    caller_name: str
+    call_purpose: str
+    call_script: str
+class TemplateResponse(BaseModel):
+    temp_id: int
+    user_id: str
+    template_name: str
+    industry: str
+    language: str
+    org_name: str
+    caller_name: str
+    call_purpose: str
+    call_script: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

@@ -15,6 +15,8 @@ from routes import call_tracking_routes
 from app.database import engine
 from app.models import Base
 from dotenv import load_dotenv
+from routes import template_routes
+
 import logging
 import os
 
@@ -60,7 +62,7 @@ app.add_middleware(
 # ------------------------------------------------------------------ #
 #  Routers                                                            #
 # ------------------------------------------------------------------ #
-
+app.include_router(template_routes.router)
 # ✅ Bolna AI — primary integration
 app.include_router(bolna_routes.router)
 
