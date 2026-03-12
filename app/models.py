@@ -12,6 +12,7 @@ WHAT CHANGED:
 
 from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean
 from sqlalchemy.ext.declarative import declarative_base
+from app.mssql_database import MssqlBase 
 import uuid
 from datetime import datetime
 
@@ -53,3 +54,25 @@ class CampaignTemplate(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow,onupdate=datetime.utcnow,nullable=False)
 
+class AiCallingTemplate(MssqlBase):
+    """
+    Maps to dbo.AicallingTemplates in the [Salesy] SQL Server database.
+    """
+    __tablename__ = "AiCallingTemplates"
+    __table_args__ = {"schema": "dbo"}
+
+    template_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(100), nullable=False, index=True)
+
+    template_name = Column(String(255), nullable=False)
+    industry = Column(String(100), nullable=True)
+    language = Column(String(10), default="en")
+
+    org_name = Column(String(255), nullable=False)
+    caller_name = Column(String(100), nullable=False)
+
+    call_purpose = Column(String(500), nullable=False)
+    call_script = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
