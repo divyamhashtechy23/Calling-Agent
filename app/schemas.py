@@ -197,18 +197,29 @@ class ScheduleBatchRequest(BaseModel):
 
 # ── Campaign Templates ────────────────────────────────────────── #
 class TemplateCreate(BaseModel):
+    user_id: str
     template_name: str
-    industry: str
+    industry: Optional[str] = None
     language: Optional[str] = "en"
     org_name: str
     caller_name: str
     call_purpose: str
     call_script: str
+
+class TemplateUpdate(BaseModel):
+    template_name: Optional[str] = None
+    industry: Optional[str] = None
+    language: Optional[str] = None
+    org_name: Optional[str] = None
+    caller_name: Optional[str] = None
+    call_purpose: Optional[str] = None
+    call_script: Optional[str] = None
+
 class TemplateResponse(BaseModel):
-    temp_id: int
+    template_id: int
     user_id: str
     template_name: str
-    industry: str
+    industry: Optional[str] = None
     language: str
     org_name: str
     caller_name: str
