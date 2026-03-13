@@ -73,6 +73,7 @@ async def delete_existing_template(template_id: int, db: Session = Depends(get_m
     """
     deleted = delete_template(db, template_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
+        raise HTTPException(status_code=404, detail=
+                            f"Template {template_id} not found")
 
 
