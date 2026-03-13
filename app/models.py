@@ -76,3 +76,5 @@ class AiCallingTemplate(MssqlBase):
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    is_running = Column("IsRunning", Boolean, nullable=False, default=False)

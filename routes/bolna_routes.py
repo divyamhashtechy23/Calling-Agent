@@ -7,6 +7,7 @@ import os
 import json
 import logging
 from typing import Optional, Dict, Any
+from services.call_queue_service import call_queue_manager
 
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Form, Depends
 from sqlalchemy.orm import Session
@@ -45,12 +46,43 @@ def get_bolna_service() -> BolnaService:
     return _bolna_service
 
 
-# ── Call Initiation ──────────────────────────────────────────────────── #
+# ── Call Initiation (with Queue) ──────────────────────────────────────── #
 
 @router.post("/api/bolna/call", summary="Initiate a Bolna AI outbound call")
 async def initiate_bolna_call(request: InitiateCallRequest):
-    """Creates an outbound call via Bolna AI using the rich context payload."""
+    """Creates an outbound call via Bolna AI — with concurrency control."""
 
+    # Step 1: Package everything the queue manager needs into a dict
+    call_request = {
+        "leadId": request.leadId,
+        "leadName": request.leadName,
+        "leadPhone": request.leadPhone,
+        "leadCompany": request.leadCompany,
+        "language": request.language,
+        "callPurpose": request.callPurpose,
+        "callingScript": request.callingScript,
+        "callerName": request.callerName,
+        "orgName": request.orgName,
+        "orgId": request.orgId,
+        "userId": request.userId,
+        "sequenceId": request.sequenceId,
+        "agent_id": request.agent_id,
+        "from_number": request.from_number,
+    }
+
+    # Step 2: Ask the queue manager — is there a free slot?
+    queue_result = await call_queue_manager.submit_call(call_request)
+
+    # Step 3: If queued (all 10 slots full), tell the caller to wait
+    if queue_result["queued"]:
+        return {
+            "success": True,
+            "status": "queued",
+            "queue_position": queue_result["queue_position"],
+            "message": queue_result["message"],
+        }
+
+    # Step 4: Slot was available — actually make the Bolna call
     db = SessionLocal()
     try:
         # Create DB record
@@ -84,7 +116,6 @@ async def initiate_bolna_call(request: InitiateCallRequest):
             "language": request.language,
         }
 
-        # Call Bolna API
         try:
             service = get_bolna_service()
             bolna_response = service.initiate_call(
@@ -95,10 +126,14 @@ async def initiate_bolna_call(request: InitiateCallRequest):
                 user_data=user_data,
             )
         except BolnaConfigError as e:
+            # Call failed to start — free the slot we reserved
+            await call_queue_manager.on_call_finished("failed")
             db.delete(call)
             db.commit()
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
+            # Call failed — free the slot
+            await call_queue_manager.on_call_finished("failed")
             call.status = "failed"
             db.commit()
             logger.error("Bolna call initiation failed: %s", e)
@@ -111,9 +146,10 @@ async def initiate_bolna_call(request: InitiateCallRequest):
 
         return {
             "success": True,
+            "status": "started",
             "internal_call_id": call.id,
             "bolna_execution_id": call.bolna_execution_id,
-            "status": call.status,
+            "active_calls": queue_result["active_calls"],
             "message": f"Call to {request.leadName} initiated successfully.",
         }
 
@@ -121,10 +157,13 @@ async def initiate_bolna_call(request: InitiateCallRequest):
         raise
     except Exception as e:
         db.rollback()
+        # Free the slot on any unexpected error
+        await call_queue_manager.on_call_finished("error")
         logger.error("Failed to initiate call: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to initiate call: {str(e)}")
     finally:
         db.close()
+
 
 
 # ── Webhook ──────────────────────────────────────────────────────────── #
@@ -218,6 +257,64 @@ async def bolna_webhook(request: Request):
 
         db.commit()
 
+        # ── QUEUE: free a slot when call reaches a terminal state ──
+        if status in ("completed", "call-disconnected"):
+            next_request = await call_queue_manager.on_call_finished(execution_id)
+
+            # If someone was waiting in the queue, start their call now
+            if next_request:
+                logger.info("Starting queued call for lead=%s", next_request.get("leadName"))
+                try:
+                    service = get_bolna_service()
+
+                    # Create a DB record for the queued lead
+                    queued_call = Call(
+                        lead_id=next_request.get("leadId"),
+                        lead_name=next_request.get("leadName"),
+                        lead_phone=next_request.get("leadPhone"),
+                        status="initiated",
+                    )
+                    db.add(queued_call)
+                    db.commit()
+                    db.refresh(queued_call)
+
+                    user_data = {
+                        "leadName": next_request.get("leadName"),
+                        "leadCompany": next_request.get("leadCompany") or "N/A",
+                        "callPurpose": next_request.get("callPurpose"),
+                        "callingScript": next_request.get("callingScript"),
+                        "callerName": next_request.get("callerName"),
+                        "orgName": next_request.get("orgName"),
+                    }
+                    metadata = {
+                        "internal_call_id": queued_call.id,
+                        "org_id": next_request.get("orgId"),
+                        "user_id": next_request.get("userId"),
+                        "sequence_id": next_request.get("sequenceId"),
+                        "lead_id": next_request.get("leadId"),
+                        "language": next_request.get("language"),
+                    }
+
+                    bolna_response = service.initiate_call(
+                        to_number=next_request["leadPhone"],
+                        agent_id=next_request.get("agent_id"),
+                        from_number=next_request.get("from_number"),
+                        metadata=metadata,
+                        user_data=user_data,
+                    )
+                    queued_call.bolna_execution_id = bolna_response.get("execution_id") or bolna_response.get("id")
+                    queued_call.status = bolna_response.get("status", "queued")
+                    db.commit()
+                    logger.info(
+                        "Queued call started | lead=%s | execution_id=%s",
+                        next_request.get("leadName"), queued_call.bolna_execution_id,
+                    )
+
+                except Exception as e:
+                    logger.error("Failed to start queued call: %s", e)
+                    # Free the slot so the queue doesn't get stuck
+                    await call_queue_manager.on_call_finished("queued-failed")
+
     except Exception as e:
         logger.error("Webhook processing error: %s", e)
         db.rollback()
@@ -225,6 +322,17 @@ async def bolna_webhook(request: Request):
         db.close()
 
     return Response(status_code=204)
+
+
+# ── Queue Status (monitoring) ────────────────────────────────────────── #
+
+@router.get("/api/bolna/queue/status", summary="Check call queue status")
+async def get_queue_status():
+    """Returns live snapshot of the call queue — useful for dashboards and debugging."""
+    return {
+        "success": True,
+        **call_queue_manager.get_status(),
+    }
 
 
 # ── Call History ─────────────────────────────────────────────────────── #

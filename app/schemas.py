@@ -2,7 +2,7 @@
 Pydantic Schemas — request/response validation for the API.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
@@ -195,6 +195,16 @@ class ScheduleBatchRequest(BaseModel):
         examples=["2024-06-04T22:40:00.000Z"]
     )
 
+# ── Standard API Response Wrapper ───────────────────────────────── #
+class ApiResponse(BaseModel):
+    """
+    Standard envelope for all API responses.
+    Frontend always gets: { success, message, data }
+    """
+    success: bool
+    message: str
+    data: Optional[Any] = None
+
 # ── Campaign Templates ────────────────────────────────────────── #
 class TemplateCreate(BaseModel):
     user_id: str
@@ -227,6 +237,15 @@ class TemplateResponse(BaseModel):
     call_script: str
     created_at: datetime
     updated_at: datetime
+    is_running: bool
+
+    @field_validator("is_running", mode="before")
+    @classmethod
+    def normalize_is_running(cls, value):
+        # Older rows may contain NULL in DB; treat that as False for API output.
+        if value is None:
+            return False
+        return value
 
     class Config:
         from_attributes = True
