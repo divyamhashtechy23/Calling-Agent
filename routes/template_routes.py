@@ -56,7 +56,7 @@ async def create_new_template(template: TemplateCreate, db: Session = Depends(ge
 @router.get("/api/templates", response_model=ApiResponse)
 async def get_all_templates(db: Session = Depends(get_mssql_db)):
     """List every campaign template"""
-    try:
+    try: 
         results = list_all_templates(db)
         return ApiResponse(
             success=True,
